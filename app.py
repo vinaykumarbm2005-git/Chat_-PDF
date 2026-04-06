@@ -5,16 +5,17 @@ from sentence_transformers import SentenceTransformer
 
 st.title("Chat with PDF (RAG Application)")
 
-# embedding model
+# Load embedding model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# vector database
+# Create vector database
 client = chromadb.Client()
 collection = client.get_or_create_collection(name="pdf_data")
 
-# upload PDF
-pdf_file = st.file_uploader("Upload your PDF", type="pdf")
+# Upload PDF
+pdf_file = st.file_uploader("Upload your PDF", type="pdf", key="pdf_upload")
 
+# Process PDF
 if pdf_file:
 
     reader = PdfReader(pdf_file)
@@ -23,11 +24,14 @@ if pdf_file:
     for page in reader.pages:
         text += page.extract_text()
 
+    # Split text into chunks
     chunk_size = 500
     chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
 
+    # Create embeddings
     embeddings = model.encode(chunks).tolist()
 
+    # Store in vector database
     for i, chunk in enumerate(chunks):
         collection.add(
             documents=[chunk],
@@ -37,27 +41,39 @@ if pdf_file:
 
     st.success("PDF uploaded and processed!")
 
-# ask question
+# Ask question
 question = st.text_input("Ask a question about the PDF")
 
 if question:
 
-    q_embedding = model.encode([question]).tolist()
+    if collection.count() == 0:
+        st.warning("Please upload a PDF first.")
 
-    results = collection.query(
-        query_embeddings=q_embedding,
-        n_results=2
-    )
+    else:
+        q_embedding = model.encode([question]).tolist()
 
-    context = " ".join(results["documents"][0])
+        results = collection.query(
+            query_embeddings=q_embedding,
+            n_results=2
+        )
 
-    # SHORT ANSWER (first 2 sentences)
-    answer = ". ".join(context.split(". ")[:2])
+        context = " ".join(results["documents"][0])
 
-    st.subheader("Answer")
-    st.write(answer)
+        # Similarity distance check
+        distance = results["distances"][0][0]
 
-# clear database
+        if distance > 1.2:
+            st.subheader("Answer")
+            st.write("The document does not contain this information.")
+
+        else:
+            # Short answer from retrieved context
+            answer = ". ".join(context.split(". ")[:2])
+
+            st.subheader("Answer")
+            st.write(answer)
+
+# Clear vector database
 if st.button("Clear Vector Database"):
     client.delete_collection("pdf_data")
     st.success("Database Cleared!")
